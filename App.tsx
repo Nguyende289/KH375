@@ -1,217 +1,212 @@
-
 import React, { useState, useEffect } from 'react';
-import { UserProfile, ViewState, User } from './types';
-import Navbar from './components/Navbar';
-import CreateView from './views/CreateView';
-import ListView from './views/ListView';
-import DashboardView from './views/DashboardView';
-import CollectorView from './views/CollectorView';
-import LoginView from './views/LoginView';
-import AdminUserView from './views/AdminUserView';
-import { initAuth } from './utils/auth';
-import { ShieldAlert } from 'lucide-react';
+import { getProfiles } from './services/dataService';
+import { FullProfile } from './types';
+import { Dashboard } from './components/Dashboard';
+import { RecordList } from './components/RecordList';
+import { ProfileDetail } from './components/ProfileDetail';
+import { UploadModal } from './components/UploadModal';
+import { SettingsModal } from './components/SettingsModal';
+import { LayoutDashboard, List, Upload, LogOut, Menu, X, Settings } from 'lucide-react';
 
-const App: React.FC = () => {
-  const [view, setView] = useState<ViewState>('list');
-  const [profiles, setProfiles] = useState<UserProfile[]>([]);
-  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
-  const [isReadOnly, setIsReadOnly] = useState(false);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+function App() {
+  const [currentView, setCurrentView] = useState<'DASHBOARD' | 'LIST'>('LIST');
+  const [selectedProfile, setSelectedProfile] = useState<FullProfile | null>(null);
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [data, setData] = useState<FullProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Initialize Auth System (Seed Admin)
-  useEffect(() => {
-    initAuth();
-    const storedUser = localStorage.getItem('hoso_current_user');
-    if (storedUser) {
-      setCurrentUser(JSON.parse(storedUser));
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const result = await getProfiles();
+      setData(result);
+    } catch (error) {
+      console.error("Failed to fetch data", error);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    fetchData();
   }, []);
 
-  // Load from localStorage on mount
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('hoso_data');
-      if (stored) {
-        setProfiles(JSON.parse(stored));
-      }
-    } catch (e) {
-      console.error("Failed to load data", e);
-    }
-  }, []);
-
-  // Save to localStorage whenever profiles change
-  useEffect(() => {
-    try {
-      localStorage.setItem('hoso_data', JSON.stringify(profiles));
-    } catch (e) {
-      console.error("Failed to save data (likely quota exceeded)", e);
-      alert("Cảnh báo: Bộ nhớ trình duyệt sắp đầy. Vui lòng xóa bớt hồ sơ cũ.");
-    }
-  }, [profiles]);
-
-  const handleLogin = (user: User) => {
-    setCurrentUser(user);
-    localStorage.setItem('hoso_current_user', JSON.stringify(user));
-    setView('list');
+  const handleProfileSelect = (profile: FullProfile) => {
+    setSelectedProfile(profile);
+    setSidebarOpen(false); // Close mobile sidebar if open
   };
 
-  const handleLogout = () => {
-    // Unlock profile if user logs out while viewing
-    if (activeProfileId && currentUser) {
-       unlockProfile(activeProfileId, currentUser.id);
-    }
-
-    setCurrentUser(null);
-    localStorage.removeItem('hoso_current_user');
-    setActiveProfileId(null);
-    setView('list'); 
+  const handleBackToList = () => {
+    setSelectedProfile(null);
   };
-
-  const unlockProfile = (profileId: string, userId: string) => {
-      setProfiles(prev => prev.map(p => {
-          if (p.id === profileId && p.viewedBy === userId) {
-              const { viewedBy, viewedByName, ...rest } = p;
-              return rest as UserProfile;
-          }
-          return p;
-      }));
-  };
-
-  const handleCreateProfile = (newProfile: UserProfile) => {
-    setProfiles(prev => [newProfile, ...prev]);
-    setActiveProfileId(newProfile.id);
-    setIsReadOnly(false); 
-    setView('collecting');
-  };
-
-  const handleUpdateProfile = (updatedProfile: UserProfile) => {
-    setProfiles(prev => prev.map(p => p.id === updatedProfile.id ? updatedProfile : p));
-  };
-
-  const handleSelectProfile = (profile: UserProfile, mode: 'view' | 'edit') => {
-    if (!currentUser) return;
-
-    // 1. CHECK LOCK STATUS
-    if (profile.viewedBy && profile.viewedBy !== currentUser.id) {
-        alert(`Hồ sơ này đang được xem bởi ${profile.viewedByName}. Vui lòng thử lại sau.`);
-        return;
-    }
-
-    // 2. APPLY LOCK
-    const lockedProfile = {
-        ...profile,
-        viewedBy: currentUser.id,
-        viewedByName: currentUser.fullName
-    };
-    
-    // Optimistically update state to show lock immediately (simulating realtime DB)
-    handleUpdateProfile(lockedProfile);
-    setActiveProfileId(profile.id);
-    
-    // 3. PERMISSION CHECK
-    const isCreator = profile.collectorId === currentUser.id;
-    const isAdmin = currentUser.role === 'admin';
-    const hasEditRights = isAdmin || isCreator;
-
-    if (mode === 'edit' && !hasEditRights) {
-      alert("Bạn không có quyền chỉnh sửa hồ sơ này.");
-      setIsReadOnly(true);
-    } else {
-      setIsReadOnly(mode === 'view');
-    }
-
-    setView('collecting');
-  };
-
-  const handleFinishOrBack = () => {
-    // UNLOCK PROFILE when leaving the view
-    if (activeProfileId && currentUser) {
-        unlockProfile(activeProfileId, currentUser.id);
-    }
-
-    setActiveProfileId(null);
-    setView('list');
-  };
-
-  // Auth Guard
-  if (!currentUser) {
-    return <LoginView onLoginSuccess={handleLogin} />;
-  }
 
   const renderContent = () => {
-    switch (view) {
-      case 'create':
-        return (
-          <CreateView 
-            onCreate={handleCreateProfile} 
-            currentUser={currentUser} 
-            existingProfiles={profiles}
-          />
-        );
-      case 'list':
-        return <ListView profiles={profiles} onSelectProfile={handleSelectProfile} currentUser={currentUser} />;
-      case 'dashboard':
-        return (
-          <DashboardView 
-            profiles={profiles} 
-            currentUser={currentUser} 
-            onNavigateToAdmin={() => setView('admin_users')}
-          />
-        );
-      case 'admin_users':
-        return currentUser.role === 'admin' ? <AdminUserView /> : <DashboardView profiles={profiles} currentUser={currentUser} />;
-      case 'collecting':
-        const activeProfile = profiles.find(p => p.id === activeProfileId);
-        if (!activeProfile) {
-            setView('list');
-            return null;
-        }
-        return (
-          <CollectorView 
-            profile={activeProfile} 
-            onUpdate={handleUpdateProfile}
-            onFinish={handleFinishOrBack} // Finish = Unlock + Back
-            onBack={handleFinishOrBack}   // Back = Unlock + Back
-            readOnly={isReadOnly}
-            currentUser={currentUser}
-          />
-        );
-      default:
-        return <ListView profiles={profiles} onSelectProfile={handleSelectProfile} currentUser={currentUser} />;
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center h-[60vh]">
+          <div className="flex flex-col items-center gap-4">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+            <p className="text-gray-500 text-sm">Đang tải dữ liệu...</p>
+          </div>
+        </div>
+      );
     }
+
+    if (selectedProfile) {
+      return <ProfileDetail profile={selectedProfile} onBack={handleBackToList} />;
+    }
+
+    if (currentView === 'DASHBOARD') {
+      return <Dashboard data={data} />;
+    }
+
+    return <RecordList data={data} onSelectProfile={handleProfileSelect} />;
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-gray-900">
-        {/* Top Header for Main Views */}
-        {view !== 'collecting' && (
-            <div className="bg-white px-4 py-3 shadow-sm border-b border-red-700 sticky top-0 z-30 flex justify-between items-center">
-                <h1 className="text-lg font-bold text-red-700 flex items-center gap-2 uppercase">
-                    <ShieldAlert className="text-red-600 fill-yellow-400" size={28} />
-                    Công An Xã Kiều Phú
-                </h1>
-                <div className="text-xs text-right">
-                  <div className="font-bold text-gray-700">{currentUser.fullName}</div>
-                  <div className="text-gray-500 capitalize">{currentUser.role === 'admin' ? 'Chỉ huy' : 'Cán bộ'}</div>
-                </div>
-            </div>
-        )}
+    <div className="min-h-screen bg-[#f8fafc] flex flex-col md:flex-row font-sans text-slate-800">
+      
+      {/* Mobile Header */}
+      <div className="md:hidden bg-white border-b border-gray-200 p-4 flex items-center justify-between sticky top-0 z-20">
+        <div className="font-bold text-xl text-primary flex items-center gap-2">
+           <div className="w-8 h-8 bg-primary text-white rounded-lg flex items-center justify-center">QL</div>
+           Hồ Sơ Số
+        </div>
+        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-600">
+          {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+      </div>
 
-      <main>
-        {renderContent()}
+      {/* Sidebar */}
+      <aside 
+        className={`fixed inset-y-0 left-0 z-30 w-64 bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="p-6 h-full flex flex-col">
+          <div className="hidden md:flex items-center gap-3 mb-10">
+             <div className="w-10 h-10 bg-primary text-white rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20 font-bold text-lg">QL</div>
+             <div>
+               <h1 className="font-bold text-gray-900 leading-tight">Quản Lý<br/>Hồ Sơ Số</h1>
+             </div>
+          </div>
+
+          <nav className="space-y-2 flex-1">
+            <button 
+              onClick={() => { setCurrentView('LIST'); setSelectedProfile(null); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
+                currentView === 'LIST' && !selectedProfile
+                  ? 'bg-primary text-white shadow-lg shadow-blue-500/30' 
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <List size={20} />
+              Danh Sách Hồ Sơ
+            </button>
+            
+            <button 
+              onClick={() => { setCurrentView('DASHBOARD'); setSelectedProfile(null); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
+                currentView === 'DASHBOARD' 
+                  ? 'bg-primary text-white shadow-lg shadow-blue-500/30' 
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <LayoutDashboard size={20} />
+              Theo Dõi & Báo Cáo
+            </button>
+
+            <button 
+              onClick={() => { setIsUploadOpen(true); setSidebarOpen(false); }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50 font-medium transition-colors"
+            >
+              <Upload size={20} />
+              Tải Ảnh / Nhập Liệu
+            </button>
+
+            <button 
+              onClick={() => { setIsSettingsOpen(true); setSidebarOpen(false); }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-50 font-medium transition-colors mt-8 border-t border-gray-100 pt-4"
+            >
+              <Settings size={20} />
+              Cấu Hình Kết Nối
+            </button>
+          </nav>
+
+          <div className="pt-6 border-t border-gray-100 mt-auto">
+            <div className="flex items-center gap-3 px-4 mb-4">
+              <img src="https://picsum.photos/40/40?random=100" alt="User" className="w-10 h-10 rounded-full border-2 border-white shadow-sm" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-gray-900 truncate">Nguyễn Quản Trị</p>
+                <p className="text-xs text-gray-500 truncate">Admin - Hà Nội</p>
+              </div>
+            </div>
+            <button className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+              <LogOut size={16} />
+              Đăng Xuất
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Overlay for mobile sidebar */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/20 z-20 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        ></div>
+      )}
+
+      {/* Main Content */}
+      <main className="flex-1 p-4 md:p-8 overflow-y-auto h-screen no-scrollbar">
+        <div className="max-w-7xl mx-auto">
+          {/* Breadcrumb / Title */}
+          {!selectedProfile && (
+            <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">
+                  {currentView === 'LIST' ? 'Danh Sách Hồ Sơ' : 'Tổng Quan Hệ Thống'}
+                </h2>
+                <p className="text-gray-500 mt-1">
+                  {currentView === 'LIST' 
+                    ? 'Quản lý và tra cứu thông tin chi tiết các hồ sơ số.' 
+                    : 'Thống kê hoạt động và tình trạng xử lý hồ sơ.'}
+                </p>
+              </div>
+              {currentView === 'LIST' && (
+                <button 
+                  onClick={() => setIsUploadOpen(true)}
+                  className="bg-primary hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg shadow-lg shadow-blue-500/30 font-medium flex items-center gap-2 transition-all active:scale-95"
+                >
+                  <Upload size={18} />
+                  Thêm Mới
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Dynamic Content */}
+          {renderContent()}
+        </div>
       </main>
 
-      {/* Navigation */}
-      {view !== 'collecting' && (
-        <Navbar 
-          currentView={view} 
-          onChangeView={setView} 
-          onLogout={handleLogout} 
-          currentUser={currentUser}
-        />
-      )}
+      {/* Upload Modal */}
+      <UploadModal 
+        isOpen={isUploadOpen} 
+        onClose={() => setIsUploadOpen(false)} 
+        onSuccess={fetchData}
+      />
+      
+      {/* Settings Modal */}
+      <SettingsModal 
+        isOpen={isSettingsOpen} 
+        onClose={() => setIsSettingsOpen(false)} 
+        onSave={fetchData}
+      />
     </div>
   );
-};
+}
 
 export default App;
